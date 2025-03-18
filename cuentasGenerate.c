@@ -20,19 +20,19 @@ int main() {
   // open .dat file in binary write mode
   FILE *file = fopen("cuentas.dat","wb");
   if (file == NULL) {
-    perror("Error abriendo cuentas.dat");
+    perror("Error abriendo cuentas.dat\n");
     return 1;
   }
   
   // write cuentas to .dat in binary format
   size_t count = fwrite(cuentas, sizeof(struct Cuenta), 3, file);
   if (count != 3) {
-    perror("Error writing to file");
+    perror("Error escribiendo a cuentas.dat\n");
   }
   
   // close file
   fclose(file);
-  printf("Cuentas iniciales generadas y guardadas!\n");
+  printf("Cuentas iniciales generadas y guardadas!\n\n");
   
   return 0;
 }
