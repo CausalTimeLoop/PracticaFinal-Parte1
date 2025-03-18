@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// define the Cuenta struct
 struct Cuenta {
   int id;            // numero identificador de cuenta
   char titular [50]; // nombre del titular de cuenta
