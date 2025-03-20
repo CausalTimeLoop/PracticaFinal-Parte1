@@ -1,5 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 // define the Cuenta struct
 struct Cuenta {
@@ -13,22 +17,22 @@ struct Cuenta {
 struct Cuenta* cuentasImport(size_t *cuentas_num) {
 
   // open cuentas.dat file in binary read mode
-  FILE *fileCuentas = fopen("cuentas.dat", "rb");
-  if (fileCuentas == NULL) {
+  FILE *cuentas_file = fopen("cuentas.dat", "rb");
+  if (cuentas_file == NULL) {
     perror("Error abriendo cuentas.dat\n");
     return NULL;  
   }
   
   // determine file size
-  fseek(fileCuentas, 0, SEEK_END);        // moves fileCuentas to the end to get file size
-  long file_size = ftell(fileCuentas);
-  rewind(fileCuentas);                    // moves fileCuentas pointer back to beginning
+  fseek(cuentas_file, 0, SEEK_END);        // moves cuentas_file to the end to get file size
+  long file_size = ftell(cuentas_file);
+  rewind(cuentas_file);                    // moves cuentas_file pointer back to beginning
   
   // calculates number of structs by dividing file size by struct size
   *cuentas_num = file_size / sizeof(struct Cuenta); 
   if (*cuentas_num == 0) {
     perror("No se encontraron registros en cuentas.dat\n");
-    fclose(fileCuentas);
+    fclose(cuentas_file);
     return NULL;
   }
   
@@ -36,20 +40,20 @@ struct Cuenta* cuentasImport(size_t *cuentas_num) {
   struct Cuenta *cuentas = malloc(*cuentas_num * sizeof(struct Cuenta));
   if (cuentas == NULL) {
     perror("No se pudo asignar memoria a las cuentas\n");
-    fclose(fileCuentas);
+    fclose(cuentas_file);
     return NULL;
   }
   
   // read all records into the dynamically allocated array
-  size_t read_count = fread(cuentas, sizeof(struct Cuenta), *cuentas_num, fileCuentas);
+  size_t read_count = fread(cuentas, sizeof(struct Cuenta), *cuentas_num, cuentas_file);
   if (read_count != *cuentas_num) {
     perror("Error leyendo cuentas.dat\n");
     free(cuentas);
-    fclose(fileCuentas);
+    fclose(cuentas_file);
     return NULL;
   }
   
-  fclose(fileCuentas);
+  fclose(cuentas_file);
   return cuentas;
 }
 
@@ -65,7 +69,35 @@ void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num) {
     printf("ID: %d | Titular: %s | Saldo: %.2f | Operaciones: %d\n",
       cuentas[i].id, cuentas[i].titular, cuentas[i].saldo, cuentas[i].operaciones);
   }
+}
+
+void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
   
+  int cuenta_id;
+  printf("Ingrese su Cuenta ID: ");
+  scanf("%d", &cuenta_id);
+  
+  struct Cuenta *cuenta_selec = NULL;
+  for (size_t i = 0; i < cuentas_num; i++) {
+    if (cuentas[i].id == cuenta_id) {
+      cuenta_selec = &cuentas[i];
+      break;
+    }
+  }
+  
+  if (!cuenta_selec) {
+    printf("Cuenta no encontrada\n");
+    return;
+  }
+  
+  char command[256];
+  sprintf(command, "gnome-terminal -- ./hello %d \ "%s\" %.2f  %d",
+  cuenta_selec->id, cuenta_selec->titular,
+  cuenta_selec->saldo, cuenta_selec->operaciones);
+  
+  printf("Iniciando sesion...\n");
+  system(command);
+  return;
 }
 
 int main() {
@@ -77,9 +109,6 @@ int main() {
     perror("Error en la funcion cuentasImport\n");
     return 1;
   }
-  
-  // void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num)
-  cuentasPrint(cuentas, cuentas_num);
   
   // free allocated memory
   free(cuentas);
