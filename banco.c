@@ -91,8 +91,8 @@ void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
   }
   
   char command[256];
-  sprintf(command, "gnome-terminal -- ./hello %d \ "%s\" %.2f  %d",
-  cuenta_selec->id, cuenta_selec->titular,
+  sprintf(command, "gnome-terminal -- bash -c './hello %d \"%s\" %.2f %d; exec bash'", 
+  cuenta_selec->id, cuenta_selec->titular, 
   cuenta_selec->saldo, cuenta_selec->operaciones);
   
   printf("Iniciando sesion...\n");
@@ -109,6 +109,9 @@ int main() {
     perror("Error en la funcion cuentasImport\n");
     return 1;
   }
+  
+  // void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num)
+  cuentaLogin(cuentas, cuentas_num);
   
   // free allocated memory
   free(cuentas);
