@@ -91,7 +91,7 @@ void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
   }
   
   char command[256];
-  sprintf(command, "gnome-terminal -- bash -c './hello %d \"%s\" %.2f %d; exec bash'", 
+  sprintf(command, "gnome-terminal -- bash -c './hello %d \"%s\" %.2f %d'", 
   cuenta_selec->id, cuenta_selec->titular, 
   cuenta_selec->saldo, cuenta_selec->operaciones);
   
