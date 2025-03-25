@@ -128,7 +128,43 @@ void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
   return; 
 }
 
+/*
+USAGE: 
+  main user menu that the program constantly loops back to
+INPUT: 
+  struct Cuenta *cuentas == a pointer to the array containing all imported cuentas
+  size_t cuentas_num     == the amount of records imported from cuenta.dat
+OUTPUT:
+  void
+*/
+void menu(struct Cuenta *cuentas, size_t cuentas_num) {
+  int choice; // users menu choice
+  
+  while (1) {        // infinite loop to stay in menu until user chooses exit
+    printf("\n===== Menu Principal =====\n");
+    printf("1. Iniciar Sesion\n");
+    printf("2. Salir\n");
+    printf("Seleccione una opcion: ");
+    
+    scanf("%d", &choice); // read user input
+    system("clear"); // clear terminal
+    
+    switch (choice) {
+      case 1:
+        cuentaLogin(cuentas, cuentas_num); // call login function
+        break;
+      case 2:
+        printf("Saliendo del programa...\n");
+        return; // exit menu loop
+      default:
+        printf("Opcion no valida, intente de nuevo.\n");
+        break;
+    }
+  }
+}
+
 int main() {
+  system("clear"); // clear terminal
   
   // struct Cuenta* cuentasImport(size_t *cuentas_num)
   size_t cuentas_num;
@@ -138,8 +174,8 @@ int main() {
     return 1;
   }
   
-  // void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num)
-  cuentaLogin(cuentas, cuentas_num);
+  // void menu(struct Cuenta *cuentas, size_t cuentas_num)
+  menu(cuentas, cuentas_num);
   
   // free allocated memory
   free(cuentas);
