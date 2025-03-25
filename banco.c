@@ -13,91 +13,119 @@ struct Cuenta {
   int operaciones;   // numero de operaciones de cuenta
 };
 
-// import cuentas.dat into a Cuenta array for the program to use
+/*
+USAGE: 
+  import cuentas.dat into a Cuenta array for the program to use
+INPUT: 
+  size_t *cuentas_num    == a pointer to the amount of records imported from cuenta.dat
+OUTPUT:
+  struct Cuenta *cuentas == a pointer to the array containing all imported cuentas
+*/
 struct Cuenta* cuentasImport(size_t *cuentas_num) {
-
-  // open cuentas.dat file in binary read mode
-  FILE *cuentas_file = fopen("cuentas.dat", "rb");
-  if (cuentas_file == NULL) {
-    perror("Error abriendo cuentas.dat\n");
-    return NULL;  
+  FILE *cuentas_file = fopen("cuentas.dat", "rb"); // open cuentas.dat file in binary read mode
+  if (cuentas_file == NULL) {                      // if the file does not exist or fails to open
+    perror("Error abriendo cuentas.dat\n");        // print error message
+    return NULL;                                   // and exit function early
   }
   
-  // determine file size
-  fseek(cuentas_file, 0, SEEK_END);        // moves cuentas_file to the end to get file size
-  long file_size = ftell(cuentas_file);
-  rewind(cuentas_file);                    // moves cuentas_file pointer back to beginning
+  fseek(cuentas_file, 0, SEEK_END);        // moves file pointer to the end
+  long file_size = ftell(cuentas_file);    // get current position to determine file size
+  rewind(cuentas_file);                    // moves file pointer back to beginning
   
-  // calculates number of structs by dividing file size by struct size
-  *cuentas_num = file_size / sizeof(struct Cuenta); 
-  if (*cuentas_num == 0) {
-    perror("No se encontraron registros en cuentas.dat\n");
-    fclose(cuentas_file);
-    return NULL;
+  *cuentas_num = file_size / sizeof(struct Cuenta); // get number of structs by dividing file size by struct size 
+  if (*cuentas_num == 0) {                                  // if no records are found
+    perror("No se encontraron registros en cuentas.dat\n"); // print error message
+    fclose(cuentas_file);                                   // close file
+    return NULL;                                            // and exit function early
   }
   
-  // allocate memory for Cuenta array based on number of records
-  struct Cuenta *cuentas = malloc(*cuentas_num * sizeof(struct Cuenta));
-  if (cuentas == NULL) {
-    perror("No se pudo asignar memoria a las cuentas\n");
-    fclose(cuentas_file);
-    return NULL;
+  struct Cuenta *cuentas = malloc(*cuentas_num * sizeof(struct Cuenta)); // allocate memory for array of cuentas
+  if (cuentas == NULL) {                                  // if malloc fails due to lack of memory
+    perror("No se pudo asignar memoria a las cuentas\n"); // print message
+    fclose(cuentas_file);                                 // close file
+    return NULL;                                          // and exit function early
   }
   
-  // read all records into the dynamically allocated array
+  // reads *cuentas_num records from cuentas.dat into the allocated array cuentas
+  //   cuentas               == memory location where data will be stored
+  //   sizeof(struct Cuenta) == size of each record
+  //   *cuentas_num          == number of records to read
+  //   cuentas_file          == file to read from
   size_t read_count = fread(cuentas, sizeof(struct Cuenta), *cuentas_num, cuentas_file);
-  if (read_count != *cuentas_num) {
-    perror("Error leyendo cuentas.dat\n");
-    free(cuentas);
-    fclose(cuentas_file);
-    return NULL;
+  if (read_count != *cuentas_num) {        // if read fewer records than expected then
+    perror("Error leyendo cuentas.dat\n"); // print error
+    free(cuentas);                         // free allocated memory
+    fclose(cuentas_file);                  // close file
+    return NULL;                           // exit function early
   }
   
   fclose(cuentas_file);
   return cuentas;
 }
 
+/*
+USAGE: 
+  print in a structured manner the imported cuenta.dat to make sure it was read correctly
+INPUT: 
+  struct Cuenta *cuentas == a pointer to the array containing all imported cuentas
+  size_t cuentas_num     == the amount of records imported from cuenta.dat
+OUTPUT:
+  void
+*/
 void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num) {
-  if (cuentas == NULL || cuentas_num == 0) {
-    printf("No hay cuentas por mostrar\n");
-    return;
+  if (cuentas == NULL || cuentas_num == 0) { // check if array is NULL or contains no accounts
+    printf("No hay cuentas por mostrar\n");  // if so then print error message
+    return;                                  // exit function early
   }
   
-  // loops through the array and prints each cuenta record
-  printf("Cuentas almacenadas:\n");
-  for (size_t i = 0; i < cuentas_num; i++) {
+  printf("Cuentas almacenadas:\n");          // print the header
+  for (size_t i = 0; i < cuentas_num; i++) { // loop through all acounts and print their details
     printf("ID: %d | Titular: %s | Saldo: %.2f | Operaciones: %d\n",
       cuentas[i].id, cuentas[i].titular, cuentas[i].saldo, cuentas[i].operaciones);
   }
 }
 
+/*
+USAGE: 
+  ask user to login using their cuenta ID and open a new usuario.c 
+  instance in a new terminal with their cuenta loaded
+INPUT: 
+  struct Cuenta *cuentas == a pointer to the array containing all imported cuentas
+  size_t cuentas_num     == the amount of records imported from cuenta.dat
+OUTPUT:
+  void
+*/
 void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
+  int cuenta_id;                    // variable to store account id
+  printf("Ingrese su Cuenta ID: "); // prompt user to enter account id
+  scanf("%d", &cuenta_id);          // read account id from user input
   
-  int cuenta_id;
-  printf("Ingrese su Cuenta ID: ");
-  scanf("%d", &cuenta_id);
+  struct Cuenta *cuenta_selec = NULL; // pointer to store the selected account
   
-  struct Cuenta *cuenta_selec = NULL;
-  for (size_t i = 0; i < cuentas_num; i++) {
-    if (cuentas[i].id == cuenta_id) {
-      cuenta_selec = &cuentas[i];
-      break;
+  for (size_t i = 0; i < cuentas_num; i++) { // loop through list of accounts to match id
+    if (cuentas[i].id == cuenta_id) {        // check if current id matches user input
+      cuenta_selec = &cuentas[i];            // if so then store address of matching account
+      break;                                 // stop search when found
     }
   }
   
-  if (!cuenta_selec) {
+  if (!cuenta_selec) { // if no matching account is found inform of error and return
     printf("Cuenta no encontrada\n");
     return;
   }
   
-  char command[256];
-  sprintf(command, "gnome-terminal -- bash -c './hello %d \"%s\" %.2f %d'", 
-  cuenta_selec->id, cuenta_selec->titular, 
-  cuenta_selec->saldo, cuenta_selec->operaciones);
+  char command[256]; // buffer to store new terminal command
   
-  printf("Iniciando sesion...\n");
-  system(command);
-  return;
+  sprintf(command,                                                 // construct new terminal command
+          "gnome-terminal -- bash -c './hello %d \"%s\" %.2f %d'", // run ./hello and pass 4 arguments
+          cuenta_selec->id,           // %d id as integer
+          cuenta_selec->titular,      // \"%s\" name string quoted to handle spaces
+          cuenta_selec->saldo,        // %.2f 2 decimal floating point balance
+          cuenta_selec->operaciones); // %d operations as integer
+  
+  printf("Iniciando sesion...\n"); // inform user of succesful startup
+  system(command);                 // execute command to open new terminal
+  return; 
 }
 
 int main() {
@@ -115,5 +143,6 @@ int main() {
   
   // free allocated memory
   free(cuentas);
+  printf("Programa Termino sin problemas...\n");
   return 0;
 }
