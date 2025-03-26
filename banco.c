@@ -13,15 +13,95 @@ struct Cuenta {
   int operaciones;   // numero de operaciones de cuenta
 };
 
+// define the Config struct
+struct Config {
+  // limites de operaciones
+  int LIMITE_RETIRO;
+  int LIMITE_TRANSFERENCIA;
+  // umbrales de deteccion de anomalias
+  int UMBRAL_RETIROS;
+  int UMBRAL_TRANSFERENCIAS;
+  // parametros de ejecucion
+  int NUM_HILOS;
+  char ARCHIVO_CUENTAS[50];
+  char ARCHIVO_LOG[50];
+};
+
+/*
+USAGE: 
+  import config.txt into a config struct for the program to use
+INPUT: 
+  void
+OUTPUT:
+  struct Config *config = a pointer to the config structure 
+*/
+struct Config* configImport() {
+  struct Config *config = malloc(sizeof(struct Config)); // allocate memory for struct Config
+  if (config == NULL) {                                  // if malloc() failed to allocate memory
+    perror("Error asignando memoria para Config\n");     // print error message
+    return NULL;                                         // exit function early
+  }
+  
+  FILE *config_file = fopen("config.txt","r"); // open file in read mode
+  if (config_file == NULL) {                   // if file failed to open
+    perror("Error abriendo config.txt\n");     // print error message
+    free(config);                              // free memory
+    return NULL;                               // exit function early
+  }
+  
+  char key[50], val[50]; // two strings to read parameters from the file
+  
+  while (fscanf(config_file, "%s = %s", key, val) != EOF) { // read key-value pair until End Of File
+    if (strcmp(key, "LIMITE_RETIRO") == 0)                  // if key matchen then
+      config->LIMITE_RETIRO = atoi(val);                    // convert to integer and assign value
+    else if (strcmp(key, "LIMITE_TRANSFERENCIA") == 0)      // if key matches then 
+      config->LIMITE_TRANSFERENCIA = atoi(val);             // convert to integer and assign value
+    else if (strcmp(key, "UMBRAL_RETIROS") == 0)            // if key matches
+      config->UMBRAL_RETIROS = atoi(val);                   // convert to integer and assign value
+    else if (strcmp(key, "UMBRAL_TRANSFERENCIAS") == 0)     // if key matches
+      config->UMBRAL_TRANSFERENCIAS = atoi(val);            // convert to integer and assign value
+    else if (strcmp(key, "NUM_HILOS") == 0)                 // if key matches
+      config->NUM_HILOS = atoi(val);                        // convert to integer and assign value
+    else if (strcmp(key, "ARCHIVO_CUENTAS") == 0)           // if key matches
+      strcpy(config->ARCHIVO_CUENTAS, val);                 // assign value
+    else if (strcmp(key, "ARCHIVO_LOG") == 0)               // if key matches
+      strcpy(config->ARCHIVO_LOG, val);                     // assign value
+  }
+  
+  fclose(config_file);
+  return config;    
+}
+
+/*
+USAGE: 
+  print in a structured manner the imported config.txt to make sure it was read correctly
+INPUT: 
+  struct Config *config == a pointer to the config structure
+OUTPUT:
+  void
+*/
+void configPrint(struct Config *config) {
+  printf("Configuración Cargada:\n");
+  printf("LIMITE_RETIRO: %d\n",         config->LIMITE_RETIRO);
+  printf("LIMITE_TRANSFERENCIA: %d\n",  config->LIMITE_TRANSFERENCIA);
+  printf("UMBRAL_RETIROS: %d\n",        config->UMBRAL_RETIROS);
+  printf("UMBRAL_TRANSFERENCIAS: %d\n", config->UMBRAL_TRANSFERENCIAS);
+  printf("NUM_HILOS: %d\n",             config->NUM_HILOS);
+  printf("ARCHIVO_CUENTAS: %s\n",       config->ARCHIVO_CUENTAS);
+  printf("ARCHIVO_LOG: %s\n",           config->ARCHIVO_LOG);
+  return;
+}
+
 /*
 USAGE: 
   import cuentas.dat into a Cuenta array for the program to use
 INPUT: 
   size_t *cuentas_num    == a pointer to the amount of records imported from cuenta.dat
+  const char *file_name  == string containing the name of the data file
 OUTPUT:
   struct Cuenta *cuentas == a pointer to the array containing all imported cuentas
 */
-struct Cuenta* cuentasImport(size_t *cuentas_num) {
+struct Cuenta* cuentasImport(const char *file_name, size_t *cuentas_num) {
   FILE *cuentas_file = fopen("cuentas.dat", "rb"); // open cuentas.dat file in binary read mode
   if (cuentas_file == NULL) {                      // if the file does not exist or fails to open
     perror("Error abriendo cuentas.dat\n");        // print error message
@@ -83,6 +163,7 @@ void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num) {
     printf("ID: %d | Titular: %s | Saldo: %.2f | Operaciones: %d\n",
       cuentas[i].id, cuentas[i].titular, cuentas[i].saldo, cuentas[i].operaciones);
   }
+  return;
 }
 
 /*
@@ -140,7 +221,7 @@ OUTPUT:
 void menu(struct Cuenta *cuentas, size_t cuentas_num) {
   int choice; // users menu choice
   
-  while (1) {        // infinite loop to stay in menu until user chooses exit
+  while (1) { // infinite loop to stay in menu until user chooses exit
     printf("\n===== Menu Principal =====\n");
     printf("1. Iniciar Sesion\n");
     printf("2. Salir\n");
@@ -166,19 +247,30 @@ void menu(struct Cuenta *cuentas, size_t cuentas_num) {
 int main() {
   system("clear"); // clear terminal
   
+  struct Config *config = configImport();
+  if (config == NULL) {
+    perror("Error en la funcion configImport\n");
+    return 1;
+  }
+  // void configPrint(struct Config *config)
+  //configPrint(config);
+  
   // struct Cuenta* cuentasImport(size_t *cuentas_num)
   size_t cuentas_num;
-  struct Cuenta *cuentas = cuentasImport(&cuentas_num);
+  struct Cuenta *cuentas = cuentasImport(config->ARCHIVO_CUENTAS, &cuentas_num);
   if (cuentas == NULL) {
     perror("Error en la funcion cuentasImport\n");
     return 1;
   }
+  // void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num)
+  //cuentasPrint(cuentas, cuentas_num);
   
   // void menu(struct Cuenta *cuentas, size_t cuentas_num)
-  menu(cuentas, cuentas_num);
+  //menu(cuentas, cuentas_num);
   
   // free allocated memory
+  free(config);
   free(cuentas);
-  printf("Programa Termino sin problemas...\n");
+  printf("\nPrograma termino sin problemas...\n\n");
   return 0;
 }
