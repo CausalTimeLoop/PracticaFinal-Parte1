@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <semaphore.h>
 
 // define the Cuenta struct
 struct Cuenta {
@@ -102,9 +103,24 @@ OUTPUT:
   struct Cuenta *cuentas == a pointer to the array containing all imported cuentas
 */
 struct Cuenta* cuentasImport(const char *file_name, size_t *cuentas_num) {
+  // create /cuentas_sem semaphore with an initial value of 1
+  sem_t *sem = sem_open("/cuentas_sem", O_CREAT, S_IRUSR | S_IWUSR, 1);
+  if (sem == SEM_FAILED) {               // if semaphore fails
+    perror("Error abriendo semaforo\n"); // print error message
+    return NULL;                         // and exit function early
+  }
+  
+  if (sem_wait(sem) < 0) {                  // aquire semaphore
+    perror("Error esperando a semaforo\n"); // if it fails print error
+    sem_close(sem);                         // close semaphore
+    return NULL;                            // and exit function early
+  }
+  
   FILE *cuentas_file = fopen("cuentas.dat", "rb"); // open cuentas.dat file in binary read mode
   if (cuentas_file == NULL) {                      // if the file does not exist or fails to open
     perror("Error abriendo cuentas.dat\n");        // print error message
+    sem_post(sem);                                 // release semaphore
+    sem_close(sem);                                // close semaphore
     return NULL;                                   // and exit function early
   }
   
@@ -116,6 +132,8 @@ struct Cuenta* cuentasImport(const char *file_name, size_t *cuentas_num) {
   if (*cuentas_num == 0) {                                  // if no records are found
     perror("No se encontraron registros en cuentas.dat\n"); // print error message
     fclose(cuentas_file);                                   // close file
+    sem_post(sem);                                          // release semaphore
+    sem_close(sem);                                         // close semaphore
     return NULL;                                            // and exit function early
   }
   
@@ -123,6 +141,8 @@ struct Cuenta* cuentasImport(const char *file_name, size_t *cuentas_num) {
   if (cuentas == NULL) {                                  // if malloc fails due to lack of memory
     perror("No se pudo asignar memoria a las cuentas\n"); // print message
     fclose(cuentas_file);                                 // close file
+    sem_post(sem);                                        // release semaphore
+    sem_close(sem);                                       // close semaphore
     return NULL;                                          // and exit function early
   }
   
@@ -136,10 +156,14 @@ struct Cuenta* cuentasImport(const char *file_name, size_t *cuentas_num) {
     perror("Error leyendo cuentas.dat\n"); // print error
     free(cuentas);                         // free allocated memory
     fclose(cuentas_file);                  // close file
+    sem_post(sem);                         // release semaphore
+    sem_close(sem);                        // close semaphore
     return NULL;                           // exit function early
   }
   
   fclose(cuentas_file);
+  sem_post(sem);
+  sem_close(sem);
   return cuentas;
 }
 
@@ -266,11 +290,13 @@ int main() {
   //cuentasPrint(cuentas, cuentas_num);
   
   // void menu(struct Cuenta *cuentas, size_t cuentas_num)
-  //menu(cuentas, cuentas_num);
+  menu(cuentas, cuentas_num);
   
   // free allocated memory
   free(config);
   free(cuentas);
+  sem_unlink("/cuentas_sem");
+  
   printf("\nPrograma termino sin problemas...\n\n");
   return 0;
 }
