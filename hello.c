@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 // define the Cuenta struct
 struct Cuenta {
@@ -9,39 +13,35 @@ struct Cuenta {
   float saldo;       // saldo de cuenta
   int operaciones;   // numero de operaciones de cuenta
 };
-/*
-argc   == (argument count): number of arguments passed to program
-argv[] == (argument vector): array of strings containing the actual arguments
-argv[0]: current program nameprogram name (hello.c)
-argv[1]: Cuenta id
-argv[2]: Cuenta titular
-argv[3]: Cuenta saldo
-argv[4]: Cuenta operaciones
-*/
-int main(int argc, char *argv[]) {
-    if (argc != 5) { // if all arguments arent correctly passed
-        printf("Uso incorrecto. Ejecutar desde banco.c\n"); // print error message
-        getchar();   // wait for any keypress to be able to see the terminal
-        return 1;    // exit with error code and close terminal
-    }
-  
+
+int main() {
+  char *fifo_path = "/tmp/banco_fifo"; // path to the fifo file
+
+  printf("Esperando datos de la cuenta...\n");
+
+  // named pipes (FIFOs) allow inter-process communication (IPC)
+  FILE *fifo = fopen(fifo_path, "r");           // open named pipe in read mode
+  if (!fifo) {                                  // if fopen() fails
+    perror("Error abriendo FIFO para lectura"); // print error message
+    return 1;                                   // exit function early
+  }
 
   struct Cuenta cuenta; // cuenta struct to store the parsed data
-
-  cuenta.id = atoi(argv[1]);          // convert (id)          from string to integer
-  strcpy(cuenta.titular, argv[2]);    // copy    (titular)     into struct
-  cuenta.saldo = atof(argv[3]);       // convert (saldo)       from string to float
-  cuenta.operaciones = atoi(argv[4]); // convert (operaciones) from string to integer
   
-  printf("\n=== Información de la Cuenta ===\n");
-  printf("ID: %d\n",          cuenta.id);
-  printf("Titular: %s\n",     cuenta.titular);
-  printf("Saldo: %.2f\n",     cuenta.saldo);
-  printf("Operaciones: %d\n", cuenta.operaciones);
-  printf("===============================\n");
+  // read formatted data from the fifo, fscanf will block(waiting) if no data is available
+  fscanf(fifo, "%d \"%49[^\"]\" %f", &cuenta.id, cuenta.titular, &cuenta.saldo);
+  fclose(fifo); // close the fifo after reading
 
-  //code
-  printf("Hello world\n");
-  getchar();
+  // displays account 
+  printf("Cuenta Iniciada:\n");
+  printf("ID: %d\n", cuenta.id);
+  printf("Titular: %s\n", cuenta.titular);
+  printf("Saldo: %.2f\n", cuenta.saldo);
+
+  // keep hello.c running
+  while (1) {
+      sleep(1);
+  }
+
   return 0;
 }
