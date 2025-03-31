@@ -3,6 +3,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <semaphore.h>
 
@@ -200,6 +202,9 @@ INPUT:
 OUTPUT:
   void
 */
+#include <sys/types.h>
+#include <sys/stat.h>
+
 void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
   int cuenta_id;                    // variable to store account id
   printf("Ingrese su Cuenta ID: "); // prompt user to enter account id
@@ -213,24 +218,40 @@ void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
       break;                                 // stop search when found
     }
   }
-  
-  if (!cuenta_selec) { // if no matching account is found inform of error and return
-    printf("Cuenta no encontrada\n");
-    return;
+
+  if (!cuenta_selec) {                // if no matching account is found
+    printf("Cuenta no encontrada\n"); // print error
+    return;                           // exit function early
   }
-  
-  char command[256]; // buffer to store new terminal command
-  
-  sprintf(command,                                                 // construct new terminal command
-          "gnome-terminal -- bash -c './hello %d \"%s\" %.2f %d'", // run ./hello and pass 4 arguments
-          cuenta_selec->id,           // %d id as integer
-          cuenta_selec->titular,      // \"%s\" name string quoted to handle spaces
-          cuenta_selec->saldo,        // %.2f 2 decimal floating point balance
-          cuenta_selec->operaciones); // %d operations as integer
-  
-  printf("Iniciando sesion...\n"); // inform user of succesful startup
-  system(command);                 // execute command to open new terminal
-  return; 
+
+  // named pipes (FIFOs) allow inter-process communication (IPC)
+  char *fifo_path = "/tmp/banco_fifo"; // path to FIFO file
+  mkfifo(fifo_path, 0666);             // create FIFO with read/write permission
+
+  pid_t pid = fork();                 // duplicate parent process
+  if (pid < 0) {                      // if process creation failed
+      perror("Error creando fork\n"); // print error
+      return;                         // exit function early
+  }
+    
+    if (pid == 0) { // child process
+      // open a new terminal and execute hello.c
+      // x-terminal-emulator is a symbolic link to the systems default terminal
+      execlp("x-terminal-emulator", "x-terminal-emulator", "-e", "./hello", (char *)NULL);
+      perror("Error ejecutando hello.c en una nueva terminal\n"); // if execlp fails print error
+      exit(1);                                                    // and then exit
+    } else {        // parent process
+      FILE *fifo = fopen(fifo_path, "w"); // open named pipe in write mode
+      if (!fifo) {                                    // if fopen() fails
+        perror("Error abriendo FIFO para escritura"); // print error message
+        return;                                       // exit function early
+      }
+      
+      // write account details to named pipe
+      fprintf(fifo, "%d \"%s\" %.2f\n", cuenta_selec->id, cuenta_selec->titular, cuenta_selec->saldo);
+      fflush(fifo); // ensure all data is written immediately
+      fclose(fifo); // close named to indicate writing is complete
+    }
 }
 
 /*
@@ -249,6 +270,7 @@ void menu(struct Cuenta *cuentas, size_t cuentas_num) {
     printf("\n===== Menu Principal =====\n");
     printf("1. Iniciar Sesion\n");
     printf("2. Salir\n");
+    printf("3. Imprimir Cuentas\n");
     printf("Seleccione una opcion: ");
     
     scanf("%d", &choice); // read user input
@@ -261,6 +283,9 @@ void menu(struct Cuenta *cuentas, size_t cuentas_num) {
       case 2:
         printf("Saliendo del programa...\n");
         return; // exit menu loop
+      case 3:
+        cuentasPrint(cuentas, cuentas_num);
+        break;
       default:
         printf("Opcion no valida, intente de nuevo.\n");
         break;
