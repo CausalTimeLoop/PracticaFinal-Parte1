@@ -83,7 +83,15 @@ INPUT:
 OUTPUT:
   void
 */
-void configPrint(struct Config *config) {
+void configPrint() {
+  struct Config *config = configImport();         // import config data
+  if (config == NULL) {                           // if config import fails
+    perror("Error en la funcion configImport\n"); // print error
+    free(config);                                 // free allocated memory
+    return;                                       // exit function early
+  }
+
+  // display information
   printf("Configuración Cargada:\n");
   printf("LIMITE_RETIRO: %d\n",         config->LIMITE_RETIRO);
   printf("LIMITE_TRANSFERENCIA: %d\n",  config->LIMITE_TRANSFERENCIA);
@@ -92,6 +100,8 @@ void configPrint(struct Config *config) {
   printf("NUM_HILOS: %d\n",             config->NUM_HILOS);
   printf("ARCHIVO_CUENTAS: %s\n",       config->ARCHIVO_CUENTAS);
   printf("ARCHIVO_LOG: %s\n",           config->ARCHIVO_LOG);
+  
+  free(config); // free allocated memory
   return;
 }
 
@@ -104,7 +114,8 @@ INPUT:
 OUTPUT:
   struct Cuenta *cuentas == a pointer to the array containing all imported cuentas
 */
-struct Cuenta* cuentasImport(const char *file_name, size_t *cuentas_num) {
+struct Cuenta* cuentasImport(size_t *cuentas_num) {
+
   // create /cuentas_sem semaphore with an initial value of 1
   sem_t *sem = sem_open("/cuentas_sem", O_CREAT, S_IRUSR | S_IWUSR, 1);
   if (sem == SEM_FAILED) {               // if semaphore fails
@@ -117,14 +128,24 @@ struct Cuenta* cuentasImport(const char *file_name, size_t *cuentas_num) {
     sem_close(sem);                         // close semaphore
     return NULL;                            // and exit function early
   }
+
+  struct Config *config = configImport();         // import config data
+  if (config == NULL) {                           // if config import fails
+    perror("Error en la funcion configImport\n"); // print error
+    free(config);                                 // free allocated memory
+    return NULL;                                  // exit function early
+  }
   
-  FILE *cuentas_file = fopen("cuentas.dat", "rb"); // open cuentas.dat file in binary read mode
+  // open cuentas.dat file in binary read mode
+  FILE *cuentas_file = fopen(config->ARCHIVO_CUENTAS, "rb");
   if (cuentas_file == NULL) {                      // if the file does not exist or fails to open
     perror("Error abriendo cuentas.dat\n");        // print error message
     sem_post(sem);                                 // release semaphore
     sem_close(sem);                                // close semaphore
     return NULL;                                   // and exit function early
   }
+  
+  free(config); // free allocated memory
   
   fseek(cuentas_file, 0, SEEK_END);        // moves file pointer to the end
   long file_size = ftell(cuentas_file);    // get current position to determine file size
@@ -178,9 +199,19 @@ INPUT:
 OUTPUT:
   void
 */
-void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num) {
+void cuentasPrint() {
+  // struct Cuenta* cuentasImport(size_t *cuentas_num)
+  size_t cuentas_num;
+  struct Cuenta *cuentas = cuentasImport(&cuentas_num);
+  if (cuentas == NULL) {                           // if cuentas import fails
+    perror("Error en la funcion cuentasImport\n"); // print error
+    free(cuentas);                                 // free allocated memory
+    return;                                        // exit function early
+  }
+
   if (cuentas == NULL || cuentas_num == 0) { // check if array is NULL or contains no accounts
     printf("No hay cuentas por mostrar\n");  // if so then print error message
+    free(cuentas);                           // free allocated memory
     return;                                  // exit function early
   }
   
@@ -189,6 +220,8 @@ void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num) {
     printf("ID: %d | Titular: %s | Saldo: %.2f | Operaciones: %d\n",
       cuentas[i].id, cuentas[i].titular, cuentas[i].saldo, cuentas[i].operaciones);
   }
+  
+  free(cuentas); // free allocated memory
   return;
 }
 
@@ -202,24 +235,37 @@ INPUT:
 OUTPUT:
   void
 */
-#include <sys/types.h>
-#include <sys/stat.h>
-
-void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
+void cuentaLogin() {
   int cuenta_id;                    // variable to store account id
   printf("Ingrese su Cuenta ID: "); // prompt user to enter account id
   scanf("%d", &cuenta_id);          // read account id from user input
   
-  struct Cuenta *cuenta_selec = NULL; // pointer to store the selected account
+  // struct Cuenta* cuentasImport(size_t *cuentas_num)
+  size_t cuentas_num;
+  struct Cuenta *cuentas = cuentasImport(&cuentas_num);
+  if (cuentas == NULL) {                           // if cuentas import fails
+    perror("Error en la funcion cuentasImport\n"); // print error
+    free(cuentas);                                 // free allocated memory
+    return;                                        // exit function early
+  }
+
+  struct Cuenta cuenta_selec; // pointer to store the selected account
+  cuenta_selec.id = -1; // Mark as invalid
   
   for (size_t i = 0; i < cuentas_num; i++) { // loop through list of accounts to match id
     if (cuentas[i].id == cuenta_id) {        // check if current id matches user input
-      cuenta_selec = &cuentas[i];            // if so then store address of matching account
+      //printf("DEBUG: ID: %d | Titular: '%s' | Saldo: %.2f | Operaciones: %d\n",
+      //  cuentas[i].id, cuentas[i].titular, cuentas[i].saldo, cuentas[i].operaciones);
+      cuenta_selec = cuentas[i];            // if so then store address of matching account
       break;                                 // stop search when found
     }
   }
+  
+  //printf("DEBUG: Cuenta Selec ID: %d\n", cuenta_selec.id);
 
-  if (!cuenta_selec) {                // if no matching account is found
+  free(cuentas); // free allocated memory
+
+  if (cuenta_selec.id == -1) {                // if no matching account is found
     printf("Cuenta no encontrada\n"); // print error
     return;                           // exit function early
   }
@@ -247,8 +293,10 @@ void cuentaLogin(struct Cuenta *cuentas, size_t cuentas_num) {
         return;                                       // exit function early
       }
       
+      //printf("DEBUG: Escribiendo en FIFO: '%d \"%s\" %.2f'\n",
+      //  cuenta_selec.id, cuenta_selec.titular, cuenta_selec.saldo);
       // write account details to named pipe
-      fprintf(fifo, "%d \"%s\" %.2f\n", cuenta_selec->id, cuenta_selec->titular, cuenta_selec->saldo);
+      fprintf(fifo, "%d \"%s\" %.2f\n", cuenta_selec.id, cuenta_selec.titular, cuenta_selec.saldo);
       fflush(fifo); // ensure all data is written immediately
       fclose(fifo); // close named to indicate writing is complete
     }
@@ -263,7 +311,7 @@ INPUT:
 OUTPUT:
   void
 */
-void menu(struct Cuenta *cuentas, size_t cuentas_num) {
+void menu() {
   int choice; // users menu choice
   
   while (1) { // infinite loop to stay in menu until user chooses exit
@@ -271,6 +319,7 @@ void menu(struct Cuenta *cuentas, size_t cuentas_num) {
     printf("1. Iniciar Sesion\n");
     printf("2. Salir\n");
     printf("3. Imprimir Cuentas\n");
+    printf("4. Imprimir Config\n");
     printf("Seleccione una opcion: ");
     
     scanf("%d", &choice); // read user input
@@ -278,13 +327,16 @@ void menu(struct Cuenta *cuentas, size_t cuentas_num) {
     
     switch (choice) {
       case 1:
-        cuentaLogin(cuentas, cuentas_num); // call login function
+        cuentaLogin(); // call login function
         break;
       case 2:
         printf("Saliendo del programa...\n");
         return; // exit menu loop
       case 3:
-        cuentasPrint(cuentas, cuentas_num);
+        cuentasPrint();
+        break;
+      case 4:
+        configPrint();
         break;
       default:
         printf("Opcion no valida, intente de nuevo.\n");
@@ -296,30 +348,10 @@ void menu(struct Cuenta *cuentas, size_t cuentas_num) {
 int main() {
   system("clear"); // clear terminal
   
-  struct Config *config = configImport();
-  if (config == NULL) {
-    perror("Error en la funcion configImport\n");
-    return 1;
-  }
-  // void configPrint(struct Config *config)
-  //configPrint(config);
-  
-  // struct Cuenta* cuentasImport(size_t *cuentas_num)
-  size_t cuentas_num;
-  struct Cuenta *cuentas = cuentasImport(config->ARCHIVO_CUENTAS, &cuentas_num);
-  if (cuentas == NULL) {
-    perror("Error en la funcion cuentasImport\n");
-    return 1;
-  }
-  // void cuentasPrint(struct Cuenta *cuentas, size_t cuentas_num)
-  //cuentasPrint(cuentas, cuentas_num);
-  
-  // void menu(struct Cuenta *cuentas, size_t cuentas_num)
-  menu(cuentas, cuentas_num);
-  
+  // void menu()
+  menu();
+
   // free allocated memory
-  free(config);
-  free(cuentas);
   sem_unlink("/cuentas_sem");
   
   printf("\nPrograma termino sin problemas...\n\n");
