@@ -1,84 +1,153 @@
-/**
- * usuario.c
- * 
- * Implementación del proceso hijo (usuario) para el sistema bancario SecureBank.
- * Gestiona el menú interactivo y las operaciones bancarias mediante hilos.
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <pthread.h>
-#include <semaphore.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <semaphore.h>
+#include <pthread.h>
 #include <signal.h>
 
-// Estructura para la configuración del sistema
-typedef struct {
-    int limite_retiro;
-    int limite_transferencia;
-    char archivo_cuentas[50];
-    char archivo_log[50];
-} Config;
-
-// Estructura de cuenta bancaria
 struct Cuenta {
-    int numero_cuenta;
-    char titular[50];
-    float saldo;
-    int num_transacciones;
+  int id;            // numero identificador de cuenta
+  char titular[50];  // nombre del titular de cuenta
+  float saldo;       // saldo de cuenta
+  int operaciones;   // numero de operaciones de cuenta
 };
 
-// Estructura para datos de operación
-typedef struct {
-    int tipo_operacion;  // 1: Depósito, 2: Retiro, 3: Transferencia
-    int numero_cuenta;
-    int cuenta_destino;  // Solo para transferencias
-    float monto;
-} DatosOperacion;
+struct Config {
+  // limites de operaciones
+  int LIMITE_RETIRO;
+  int LIMITE_TRANSFERENCIA;
+  // umbrales de deteccion de anomalias
+  int UMBRAL_RETIROS;
+  int UMBRAL_TRANSFERENCIAS;
+  // parametros de ejecucion
+  int NUM_HILOS;
+  char ARCHIVO_CUENTAS[50];
+  char ARCHIVO_LOG[50];
+};
 
 // Variables globales
-Config config;
-int pipe_hijo_padre[2];
-int pipe_padre_hijo[2];
-int cuenta_usuario;
-sem_t *semaforo;
+struct Cuenta cuenta_actual;  // La cuenta del usuario actual
+struct Config *config;        // Configuración del sistema
+sem_t *sem_cuentas;           // Semáforo para acceso al archivo de cuentas
+int pipe_usuario_banco[2];    // Tubería usuario -> banco
+int pipe_banco_usuario[2];    // Tubería banco -> usuario
 
-// Prototipos de funciones
-void ejecutar_menu_usuario(int tuberias[2], Config cfg, int num_cuenta);
-void *realizar_operacion(void *arg);
-struct Cuenta buscar_cuenta(int numero_cuenta);
+// Estructura para pasar datos a hilos
+typedef struct {
+  int tipo_operacion;  // 1: Depósito, 2: Retiro, 3: Transferencia
+  float monto;
+  int cuenta_destino;  // Solo para transferencias
+} OperacionDatos;
+
+// Funciones
+void inicializar_usuario();
+void menu_usuario();
+void *realizar_deposito(void *arg);
+void *realizar_retiro(void *arg);
+void *realizar_transferencia(void *arg);
+void consultar_saldo();
 int actualizar_cuenta(struct Cuenta cuenta);
-void enviar_mensaje_padre(const char *mensaje);
+struct Cuenta buscar_cuenta_por_id(int id);
+void registrar_operacion(const char *mensaje);
 
-/**
- * Inicializa y ejecuta el menú de usuario
- */
-void ejecutar_menu_usuario(int tuberia_ph[2], int tuberia_hp[2], Config cfg, int num_cuenta) {
-    // Inicializar variables globales
-    config = cfg;
-    pipe_padre_hijo[0] = tuberia_ph[0];
-    pipe_padre_hijo[1] = tuberia_ph[1];
-    pipe_hijo_padre[0] = tuberia_hp[0];
-    pipe_hijo_padre[1] = tuberia_hp[1];
-    cuenta_usuario = num_cuenta;
-    
-    // Abrir el semáforo
-    semaforo = sem_open("/cuentas_sem", 0);
-    if (semaforo == SEM_FAILED) {
-        perror("Error al abrir el semáforo");
-        exit(EXIT_FAILURE);
+struct Config* configImport() {
+  struct Config *config = malloc(sizeof(struct Config)); 
+  if (config == NULL) {                                  
+    perror("Error asignando memoria para Config\n");    
+    return NULL;                                        
+  }
+  
+  FILE *config_file = fopen("config.txt", "r"); 
+  if (config_file == NULL) {                   
+    perror("Error abriendo config.txt\n");     
+    free(config);                             
+    return NULL;                               
+  }
+  
+  char key[50], val[50]; // 2 strings para leer los parametros del archivo 
+  
+  while (fscanf(config_file, "%s = %s", key, val) != EOF) { 
+    if (strcmp(key, "LIMITE_RETIRO") == 0)                 
+      config->LIMITE_RETIRO = atoi(val);                   
+    else if (strcmp(key, "LIMITE_TRANSFERENCIA") == 0)    
+      config->LIMITE_TRANSFERENCIA = atoi(val);            
+    else if (strcmp(key, "UMBRAL_RETIROS") == 0)           
+      config->UMBRAL_RETIROS = atoi(val);                  
+    else if (strcmp(key, "UMBRAL_TRANSFERENCIAS") == 0)   
+      config->UMBRAL_TRANSFERENCIAS = atoi(val);           
+    else if (strcmp(key, "NUM_HILOS") == 0)                
+      config->NUM_HILOS = atoi(val);                        
+    else if (strcmp(key, "ARCHIVO_CUENTAS") == 0)        
+      strcpy(config->ARCHIVO_CUENTAS, val);                
+    else if (strcmp(key, "ARCHIVO_LOG") == 0)               
+      strcpy(config->ARCHIVO_LOG, val);                     
+  }
+  
+  fclose(config_file);
+  return config;    
+}
+
+ // Inicializa el usuario leyendo los datos de la cuenta desde el FIFO
+ 
+void inicializar_usuario() {
+    config = configImport();
+    if (config == NULL) {
+        perror("Error cargando configuración");
+        exit(1);
     }
     
-    printf("\n--- Bienvenido al Sistema Bancario SecureBank ---\n");
-    printf("Usuario conectado. Cuenta: %d\n", cuenta_usuario);
+    // Abre el semáforo para el acceso a cuentas
+    sem_cuentas = sem_open("/cuentas_sem", 0);
+    if (sem_cuentas == SEM_FAILED) {
+        perror("Error abriendo semáforo de cuentas");
+        exit(1);
+    }
     
+    // Lee los datos de la cuenta desde el FIFO
+    char *fifo_path = "/tmp/banco_fifo";
+    FILE *fifo = fopen(fifo_path, "r");
+    if (!fifo) {
+        perror("Error abriendo FIFO para lectura");
+        exit(1);
+    }
+    
+    // Lee los datos de la cuenta
+    if (fscanf(fifo, "%d \"%[^\"]\" %f", &cuenta_actual.id, cuenta_actual.titular, &cuenta_actual.saldo) != 3) {
+        perror("Error leyendo datos de cuenta desde FIFO");
+        fclose(fifo);
+        exit(1);
+    }
+    
+    fclose(fifo);
+    
+    // Lee los datos completos de la cuenta desde el archivo
+    if (sem_wait(sem_cuentas) == -1) {
+        perror("Error adquiriendo semáforo");
+        exit(1);
+    }
+    
+    struct Cuenta cuenta_completa = buscar_cuenta_por_id(cuenta_actual.id);
+    if (cuenta_completa.id == cuenta_actual.id) {
+        cuenta_actual = cuenta_completa;
+    }
+    
+    sem_post(sem_cuentas);
+    
+    printf("\n=== Bienvenido al Sistema Bancario SecureBank ===\n");
+    printf("Usuario: %s (ID: %d)\n", cuenta_actual.titular, cuenta_actual.id);
+    printf("Saldo actual: %.2f\n", cuenta_actual.saldo);
+    printf("Operaciones realizadas: %d\n", cuenta_actual.operaciones);
+}
+
+// Menú
+void menu_usuario() {
     int opcion;
-    float monto;
-    int cuenta_destino;
     pthread_t hilo;
-    DatosOperacion datos;
+    OperacionDatos datos;
     
     while (1) {
         printf("\n=== MENÚ DE USUARIO ===\n");
@@ -89,251 +158,340 @@ void ejecutar_menu_usuario(int tuberia_ph[2], int tuberia_hp[2], Config cfg, int
         printf("5. Salir\n");
         printf("Seleccione una opción: ");
         
-        if (scanf("%d", &opcion) != 1) {
-            int c;
-            while ((c = getchar()) != '\n' && c != EOF);
-            printf("Entrada inválida. Intente nuevamente.\n");
-            continue;
-        }
+        scanf("%d", &opcion);
         
         switch (opcion) {
-            case 1: // Depósito
+            case 1: { // Depósito
                 printf("Ingrese monto a depositar: ");
-                scanf("%f", &monto);
-                if (monto <= 0) {
+                scanf("%f", &datos.monto);
+                
+                if (datos.monto <= 0) {
                     printf("El monto debe ser positivo.\n");
                     break;
                 }
                 
-                datos.tipo_operacion = 1;
-                datos.numero_cuenta = cuenta_usuario;
-                datos.monto = monto;
-                
-                pthread_create(&hilo, NULL, realizar_operacion, &datos);
+                pthread_create(&hilo, NULL, realizar_deposito, (void *)&datos);
                 pthread_join(hilo, NULL);
                 break;
-                
-            case 2: // Retiro
+            }
+            
+            case 2: { // Retiro
                 printf("Ingrese monto a retirar: ");
-                scanf("%f", &monto);
-                if (monto <= 0) {
+                scanf("%f", &datos.monto);
+                
+                if (datos.monto <= 0) {
                     printf("El monto debe ser positivo.\n");
                     break;
                 }
                 
-                if (monto > config.limite_retiro) {
-                    printf("Error: Excede el límite de retiro (%d)\n", config.limite_retiro);
+                if (datos.monto > config->LIMITE_RETIRO) {
+                    printf("Error: El monto excede el límite de retiro (%d)\n", config->LIMITE_RETIRO);
                     break;
                 }
                 
-                datos.tipo_operacion = 2;
-                datos.numero_cuenta = cuenta_usuario;
-                datos.monto = monto;
-                
-                pthread_create(&hilo, NULL, realizar_operacion, &datos);
+                pthread_create(&hilo, NULL, realizar_retiro, (void *)&datos);
                 pthread_join(hilo, NULL);
                 break;
-                
-            case 3: // Transferencia
+            }
+            
+            case 3: { // Transferencia
                 printf("Ingrese cuenta destino: ");
-                scanf("%d", &cuenta_destino);
+                scanf("%d", &datos.cuenta_destino);
                 
-                if (cuenta_destino == cuenta_usuario) {
-                    printf("No puede transferir a su propia cuenta.\n");
+                if (datos.cuenta_destino == cuenta_actual.id) {
+                    printf("No puedes transferir a tu propia cuenta.\n");
                     break;
                 }
                 
                 printf("Ingrese monto a transferir: ");
-                scanf("%f", &monto);
-                if (monto <= 0) {
+                scanf("%f", &datos.monto);
+                
+                if (datos.monto <= 0) {
                     printf("El monto debe ser positivo.\n");
                     break;
                 }
                 
-                if (monto > config.limite_transferencia) {
-                    printf("Error: Excede el límite de transferencia (%d)\n", config.limite_transferencia);
+                if (datos.monto > config->LIMITE_TRANSFERENCIA) {
+                    printf("Error: El monto excede el límite de transferencia (%d)\n", config->LIMITE_TRANSFERENCIA);
                     break;
                 }
                 
-                datos.tipo_operacion = 3;
-                datos.numero_cuenta = cuenta_usuario;
-                datos.cuenta_destino = cuenta_destino;
-                datos.monto = monto;
-                
-                pthread_create(&hilo, NULL, realizar_operacion, &datos);
+                pthread_create(&hilo, NULL, realizar_transferencia, (void *)&datos);
                 pthread_join(hilo, NULL);
                 break;
-                
+            }
+            
             case 4: // Consultar saldo
-                sem_wait(semaforo);
-                struct Cuenta cuenta = buscar_cuenta(cuenta_usuario);
-                sem_post(semaforo);
-                
-                if (cuenta.numero_cuenta == cuenta_usuario) {
-                    printf("\n=== DATOS DE LA CUENTA ===\n");
-                    printf("Titular: %s\n", cuenta.titular);
-                    printf("Número: %d\n", cuenta.numero_cuenta);
-                    printf("Saldo: %.2f\n", cuenta.saldo);
-                    printf("Transacciones: %d\n", cuenta.num_transacciones);
-                } else {
-                    printf("Error al obtener datos de la cuenta.\n");
-                }
+                consultar_saldo();
                 break;
                 
             case 5: // Salir
                 printf("Gracias por utilizar SecureBank. ¡Hasta pronto!\n");
-                sem_close(semaforo);
-                close(pipe_hijo_padre[1]);
-                close(pipe_padre_hijo[0]);
-                exit(EXIT_SUCCESS);
+                sem_close(sem_cuentas);
+                free(config);
+                exit(0);
                 
             default:
-                printf("Opción inválida.\n");
+                printf("Opción inválida. Intente nuevamente.\n");
         }
     }
 }
 
-/**
- * Función ejecutada por el hilo para realizar operaciones bancarias
- */
-void *realizar_operacion(void *arg) {
-    DatosOperacion *datos = (DatosOperacion *)arg;
-    char mensaje[100];
+
+void *realizar_deposito(void *arg) {
+    OperacionDatos *datos = (OperacionDatos *)arg;
+    float monto = datos->monto;
     
-    sem_wait(semaforo);
-    
-    // Obtener cuenta origen
-    struct Cuenta cuenta = buscar_cuenta(datos->numero_cuenta);
-    if (cuenta.numero_cuenta != datos->numero_cuenta) {
-        printf("Error: Cuenta no encontrada.\n");
-        sem_post(semaforo);
+    // Adquiere el semáforo
+    if (sem_wait(sem_cuentas) == -1) {
+        perror("Error adquiriendo semáforo");
         pthread_exit(NULL);
     }
     
-    switch (datos->tipo_operacion) {
-        case 1: // Depósito
-            cuenta.saldo += datos->monto;
-            cuenta.num_transacciones++;
-            if (actualizar_cuenta(cuenta)) {
-                printf("Depósito realizado con éxito. Nuevo saldo: %.2f\n", cuenta.saldo);
-                sprintf(mensaje, "Depósito en cuenta %d: +%.2f", cuenta.numero_cuenta, datos->monto);
-                enviar_mensaje_padre(mensaje);
-            } else {
-                printf("Error al realizar el depósito.\n");
-            }
-            break;
-            
-        case 2: // Retiro
-            if (cuenta.saldo < datos->monto) {
-                printf("Error: Saldo insuficiente.\n");
-                sem_post(semaforo);
-                pthread_exit(NULL);
-            }
-            
-            cuenta.saldo -= datos->monto;
-            cuenta.num_transacciones++;
-            if (actualizar_cuenta(cuenta)) {
-                printf("Retiro realizado con éxito. Nuevo saldo: %.2f\n", cuenta.saldo);
-                sprintf(mensaje, "Retiro en cuenta %d: -%.2f", cuenta.numero_cuenta, datos->monto);
-                enviar_mensaje_padre(mensaje);
-            } else {
-                printf("Error al realizar el retiro.\n");
-            }
-            break;
-            
-        case 3: // Transferencia
-            // Verificar saldo suficiente
-            if (cuenta.saldo < datos->monto) {
-                printf("Error: Saldo insuficiente para la transferencia.\n");
-                sem_post(semaforo);
-                pthread_exit(NULL);
-            }
-            
-            // Buscar cuenta destino
-            struct Cuenta cuenta_dest = buscar_cuenta(datos->cuenta_destino);
-            if (cuenta_dest.numero_cuenta != datos->cuenta_destino) {
-                printf("Error: Cuenta destino no encontrada.\n");
-                sem_post(semaforo);
-                pthread_exit(NULL);
-            }
-            
-            // Realizar transferencia
-            cuenta.saldo -= datos->monto;
-            cuenta.num_transacciones++;
-            cuenta_dest.saldo += datos->monto;
-            cuenta_dest.num_transacciones++;
-            
-            // Actualizar ambas cuentas
-            if (actualizar_cuenta(cuenta) && actualizar_cuenta(cuenta_dest)) {
-                printf("Transferencia realizada con éxito. Nuevo saldo: %.2f\n", cuenta.saldo);
-                sprintf(mensaje, "Transferencia de cuenta %d a cuenta %d: %.2f", 
-                        cuenta.numero_cuenta, cuenta_dest.numero_cuenta, datos->monto);
-                enviar_mensaje_padre(mensaje);
-            } else {
-                printf("Error al realizar la transferencia.\n");
-            }
-            break;
+    // Busca la cuenta y la actualiza
+    struct Cuenta cuenta = buscar_cuenta_por_id(cuenta_actual.id);
+    
+    if (cuenta.id != cuenta_actual.id) {
+        printf("Error: No se encontró la cuenta.\n");
+        sem_post(sem_cuentas);
+        pthread_exit(NULL);
     }
     
-    sem_post(semaforo);
+    // Realiza el depósito
+    cuenta.saldo += monto;
+    cuenta.operaciones++;
+    
+    // Actualiza la cuenta en el archivo
+    if (actualizar_cuenta(cuenta)) {
+        cuenta_actual = cuenta;
+        printf("Depósito realizado con éxito. Nuevo saldo: %.2f\n", cuenta.saldo);
+        
+        // Registra la operación
+        char mensaje[100];
+        sprintf(mensaje, "Depósito en cuenta %d: +%.2f", cuenta.id, monto);
+        registrar_operacion(mensaje);
+    } else {
+        printf("Error al realizar el depósito.\n");
+    }
+    
+    // Libera el semáforo
+    sem_post(sem_cuentas);
     pthread_exit(NULL);
 }
 
-/**
- * Busca una cuenta en el archivo de cuentas
- */
-struct Cuenta buscar_cuenta(int numero_cuenta) {
+void *realizar_retiro(void *arg) {
+    OperacionDatos *datos = (OperacionDatos *)arg;
+    float monto = datos->monto;
+    
+    // Adquiere el semáforo
+    if (sem_wait(sem_cuentas) == -1) {
+        perror("Error adquiriendo semáforo");
+        pthread_exit(NULL);
+    }
+    
+    // Buscar la cuenta y la actualiza
+    struct Cuenta cuenta = buscar_cuenta_por_id(cuenta_actual.id);
+    
+    if (cuenta.id != cuenta_actual.id) {
+        printf("Error: No se encontró la cuenta.\n");
+        sem_post(sem_cuentas);
+        pthread_exit(NULL);
+    }
+    
+    // Verifica si el saldo es suficiente
+    if (cuenta.saldo < monto) {
+        printf("Error: Saldo insuficiente. Saldo actual: %.2f\n", cuenta.saldo);
+        sem_post(sem_cuentas);
+        pthread_exit(NULL);
+    }
+    
+    // Realiza el retiro
+    cuenta.saldo -= monto;
+    cuenta.operaciones++;
+    
+    // Actualiza la cuenta en el archivo
+    if (actualizar_cuenta(cuenta)) {
+        cuenta_actual = cuenta;
+        printf("Retiro realizado con éxito. Nuevo saldo: %.2f\n", cuenta.saldo);
+        
+        // Registra la operación
+        char mensaje[100];
+        sprintf(mensaje, "Retiro en cuenta %d: -%.2f", cuenta.id, monto);
+        registrar_operacion(mensaje);
+    } else {
+        printf("Error al realizar el retiro.\n");
+    }
+    
+    // Libera el semáforo
+    sem_post(sem_cuentas);
+    pthread_exit(NULL);
+}
+
+
+void *realizar_transferencia(void *arg) {
+    OperacionDatos *datos = (OperacionDatos *)arg;
+    float monto = datos->monto;
+    int cuenta_destino_id = datos->cuenta_destino;
+    
+    // Adquirir el semáforo
+    if (sem_wait(sem_cuentas) == -1) {
+        perror("Error adquiriendo semáforo");
+        pthread_exit(NULL);
+    }
+    
+    // Busca la cuenta de origen
+    struct Cuenta cuenta_origen = buscar_cuenta_por_id(cuenta_actual.id);
+    
+    if (cuenta_origen.id != cuenta_actual.id) {
+        printf("Error: No se encontró la cuenta origen.\n");
+        sem_post(sem_cuentas);
+        pthread_exit(NULL);
+    }
+    
+    // Verifica si el saldo es sufuficiente
+    if (cuenta_origen.saldo < monto) {
+        printf("Error: Saldo insuficiente. Saldo actual: %.2f\n", cuenta_origen.saldo);
+        sem_post(sem_cuentas);
+        pthread_exit(NULL);
+    }
+    
+    // Busca la cuenta de destino
+    struct Cuenta cuenta_destino = buscar_cuenta_por_id(cuenta_destino_id);
+    
+    if (cuenta_destino.id != cuenta_destino_id) {
+        printf("Error: La cuenta destino no existe.\n");
+        sem_post(sem_cuentas);
+        pthread_exit(NULL);
+    }
+    
+    // Realizar la transferencia
+    cuenta_origen.saldo -= monto;
+    cuenta_origen.operaciones++;
+    
+    cuenta_destino.saldo += monto;
+    cuenta_destino.operaciones++;
+    
+    // Actualiza ambas cuentas
+    int exito = actualizar_cuenta(cuenta_origen) && actualizar_cuenta(cuenta_destino);
+    
+    if (exito) {
+        cuenta_actual = cuenta_origen;
+        printf("Transferencia realizada con éxito. Nuevo saldo: %.2f\n", cuenta_origen.saldo);
+        
+        // Registra la operación
+        char mensaje[100];
+        sprintf(mensaje, "Transferencia de cuenta %d a cuenta %d: %.2f", 
+                cuenta_origen.id, cuenta_destino.id, monto);
+        registrar_operacion(mensaje);
+    } else {
+        printf("Error al realizar la transferencia.\n");
+    }
+    
+    // Libera el semáforo
+    sem_post(sem_cuentas);
+    pthread_exit(NULL);
+}
+
+void consultar_saldo() {
+    // Adquirir el semáforo
+    if (sem_wait(sem_cuentas) == -1) {
+        perror("Error adquiriendo semáforo");
+        return;
+    }
+    
+    // Buscar la cuenta
+    struct Cuenta cuenta = buscar_cuenta_por_id(cuenta_actual.id);
+    
+    if (cuenta.id == cuenta_actual.id) {
+        cuenta_actual = cuenta;
+        printf("\n=== INFORMACIÓN DE CUENTA ===\n");
+        printf("ID: %d\n", cuenta.id);
+        printf("Titular: %s\n", cuenta.titular);
+        printf("Saldo actual: %.2f\n", cuenta.saldo);
+        printf("Operaciones realizadas: %d\n", cuenta.operaciones);
+    } else {
+        printf("Error: No se pudo obtener la información de la cuenta.\n");
+    }
+    
+    // Libera el semáforo
+    sem_post(sem_cuentas);
+}
+
+ // Busca una cuenta por su ID en el archivo de cuentas
+struct Cuenta buscar_cuenta_por_id(int id) {
     struct Cuenta cuenta;
     memset(&cuenta, 0, sizeof(struct Cuenta));
     
-    FILE *archivo = fopen(config.archivo_cuentas, "rb");
+    FILE *archivo = fopen(config->ARCHIVO_CUENTAS, "rb");
     if (archivo == NULL) {
-        perror("Error al abrir el archivo de cuentas");
+        perror("Error abriendo el archivo de cuentas");
         return cuenta;
     }
     
     while (fread(&cuenta, sizeof(struct Cuenta), 1, archivo) == 1) {
-        if (cuenta.numero_cuenta == numero_cuenta) {
+        if (cuenta.id == id) {
             fclose(archivo);
             return cuenta;
         }
     }
     
-    // Si llega aquí, no encontró la cuenta
     memset(&cuenta, 0, sizeof(struct Cuenta));
     fclose(archivo);
     return cuenta;
 }
 
-/**
- * Actualiza una cuenta en el archivo de cuentas
- */
+ // Actualiza una cuenta en el archivo de cuentas
 int actualizar_cuenta(struct Cuenta cuenta) {
-    FILE *archivo = fopen(config.archivo_cuentas, "rb+");
+    FILE *archivo = fopen(config->ARCHIVO_CUENTAS, "rb+");
     if (archivo == NULL) {
-        perror("Error al abrir el archivo de cuentas");
+        perror("Error abriendo el archivo de cuentas");
         return 0;
     }
     
     struct Cuenta temp;
+    int encontrado = 0;
+    
     while (fread(&temp, sizeof(struct Cuenta), 1, archivo) == 1) {
-        if (temp.numero_cuenta == cuenta.numero_cuenta) {
-            // Retroceder al inicio del registro
+        if (temp.id == cuenta.id) {
             fseek(archivo, -sizeof(struct Cuenta), SEEK_CUR);
-            // Escribir el registro actualizado
             fwrite(&cuenta, sizeof(struct Cuenta), 1, archivo);
-            fclose(archivo);
-            return 1;
+            encontrado = 1;
+            break;
         }
     }
     
     fclose(archivo);
-    return 0;
+    return encontrado;
 }
 
-/**
- * Envía un mensaje al proceso padre
- */
-void enviar_mensaje_padre(const char *mensaje) {
-    write(pipe_hijo_padre[1], mensaje, strlen(mensaje) + 1);
+ // Registra una operación en el log 
+void registrar_operacion(const char *mensaje) {
+    // Esta función envia el mensaje al proceso principal para el registro
+    
+    // Por ahora, simplemente escribiremos en el archivo de log directamente
+    FILE *log = fopen(config->ARCHIVO_LOG, "a");
+    if (log == NULL) {
+        perror("Error abriendo archivo de log");
+        return;
+    }
+    
+    // Obtener la hora actual
+    time_t now = time(NULL);
+    char timestamp[30];
+    strftime(timestamp, sizeof(timestamp), "[%Y-%m-%d %H:%M:%S]", localtime(&now));
+    
+    // Escribir la entrada en el log
+    fprintf(log, "%s %s\n", timestamp, mensaje);
+    fclose(log);
+}
+
+// Función principal
+int main() {
+    // Inicializa el usuario
+    inicializar_usuario();
+    
+    // Muestra el menú de usuario
+    menu_usuario();
+    
+    return 0;
 }
