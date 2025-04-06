@@ -8,6 +8,17 @@
 #include <semaphore.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#define MQ_KEY 0451
+
+// define the Mensaje struct
+struct Mensaje {
+  long mtype;  // message identifier, filter and priority of messages, obligatory
+  int id;      // numero identificador de cuenta
+  char tipo;   // 'R' retiro, 'D' deposito, 'T' transferencia
+  float monto; // money amount
+};
 
 struct Cuenta {
   int id;            // numero identificador de cuenta
@@ -53,6 +64,35 @@ void consultar_saldo();
 int actualizar_cuenta(struct Cuenta cuenta);
 struct Cuenta buscar_cuenta_por_id(int id);
 void registrar_operacion(const char *mensaje);
+
+/*
+USAGE: 
+  send a transaction message to a message queue for monitor to read
+INPUT: 
+  char tipo   == the type of transaction being performed
+  float monto == the amount of money moved in the transaction
+OUTPUT:
+  void
+*/
+void messageMonitor(char tipo, float monto) {
+  int msgid = msgget(MQ_KEY, 0666 | IPC_CREAT); // create or access message queue
+  if (msgid == -1) {                                         // if message queue fails
+    perror("Error obteniendo cola de mensajes (usuario)\n"); // print error
+    return;                                                  // and exit function early
+  }
+
+  struct Mensaje mensaje;        // variable to hold the message to be sent
+  mensaje.mtype = 1;             // message type, arbitrary selection but obligatory
+  mensaje.id = cuenta_actual.id; // account id sending the message
+  mensaje.tipo = tipo;           // type of transaction
+  mensaje.monto = monto;         // amount of money in transaction
+
+  // send message to queue
+  if (msgsnd(msgid, &mensaje, sizeof(mensaje) - sizeof(long), 0) == -1) {
+    perror("msgsnd (monitor)"); // print error if message fails
+  }
+  return;
+}
 
 struct Config* configImport() {
   struct Config *config = malloc(sizeof(struct Config)); 
@@ -270,6 +310,7 @@ void *realizar_deposito(void *arg) {
         char mensaje[100];
         sprintf(mensaje, "Depósito en cuenta %d: +%.2f", cuenta.id, monto);
         registrar_operacion(mensaje);
+        messageMonitor('D', monto); // send message to monitor
     } else {
         printf("Error al realizar el depósito.\n");
     }
@@ -318,6 +359,7 @@ void *realizar_retiro(void *arg) {
         char mensaje[100];
         sprintf(mensaje, "Retiro en cuenta %d: -%.2f", cuenta.id, monto);
         registrar_operacion(mensaje);
+        messageMonitor('R', monto); // send message to monitor
     } else {
         printf("Error al realizar el retiro.\n");
     }
@@ -383,6 +425,7 @@ void *realizar_transferencia(void *arg) {
         sprintf(mensaje, "Transferencia de cuenta %d a cuenta %d: %.2f", 
                 cuenta_origen.id, cuenta_destino.id, monto);
         registrar_operacion(mensaje);
+        messageMonitor('T', monto); // send message to monitor
     } else {
         printf("Error al realizar la transferencia.\n");
     }
