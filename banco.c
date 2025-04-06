@@ -7,6 +7,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <semaphore.h>
+#define PIPE_PATH "/tmp/alert_pipe" // path to the named pipe
 
 // define the Cuenta struct
 struct Cuenta {
@@ -29,6 +30,71 @@ struct Config {
   char ARCHIVO_CUENTAS[50];
   char ARCHIVO_LOG[50];
 };
+
+/*
+USAGE:
+  listen for and process monitor alerts
+INPUT:
+  void
+OUTPUT:
+  void
+*/
+void receiveAlerts() {
+  char alert_message[256];               // buffer for alert message
+  
+  // Check if the FIFO exists (no need to remove it)
+  if (access(PIPE_PATH, F_OK) == -1) {
+    // if FIFO doesnt exist then create it
+    if (mkfifo(PIPE_PATH, 0666) != 0) {
+      perror("Error creando la tuberia FIFO\n");
+      return;
+    }
+  }
+
+  FILE *fifo = fopen(PIPE_PATH, "r"); // open pipe in read mode
+  if (!fifo) {                                    // if opening fails then
+    perror("Error abriendo FIFO para lectura\n"); // print error
+    return;                                       // and exit function early
+  }
+
+  while (1) { // infinite loop
+    // block and read from fifo
+    if (fgets(alert_message, sizeof(alert_message), fifo)) {
+      printf("Alerta recibida: %s", alert_message);  // display alert message
+    } else {
+      break; // if theres no more data to read then break loop
+    }
+  }
+
+  fclose(fifo); // close pipe
+  return;
+}
+
+
+/*
+USAGE:
+  start monitor.c as a background child process
+INPUT:
+  void
+OUTPUT:
+  void
+*/
+void monitorStart() {
+  pid_t pid = fork(); // create new child process
+
+  if (pid < 0) {                              // if process creation fails
+    perror("Error creando fork (monitor)\n"); // print error
+    exit(1);                                  // exit with error
+  }
+
+  if (pid == 0) { // child process
+    printf("Iniciando monitor en segundo plano...\n"); // show we are in the child process
+    execl("./monitor", "monitor", (char *)NULL);       // execute monitor.c
+    perror("Error al ejecutar monitor");               // if execl fails print error
+    exit(1);                                           // exit with error
+  }
+  // parent process continues execution
+}
 
 /*
 USAGE: 
@@ -281,9 +347,9 @@ void cuentaLogin() {
   }
     
     if (pid == 0) { // child process
-      // open a new terminal and execute hello.c
+      // open a new terminal and execute usuario  .c
       // x-terminal-emulator is a symbolic link to the systems default terminal
-      execlp("x-terminal-emulator", "x-terminal-emulator", "-e", "./hello", (char *)NULL);
+      execlp("x-terminal-emulator", "x-terminal-emulator", "-e", "./usuario", (char *)NULL);
       perror("Error ejecutando hello.c en una nueva terminal\n"); // if execlp fails print error
       exit(1);                                                    // and then exit
     } else {        // parent process
@@ -347,6 +413,15 @@ void menu() {
 
 int main() {
   system("clear"); // clear terminal
+  
+  // void monitorStart()
+  monitorStart();
+  
+  pid_t pid = fork();
+  if (pid == 0) { // child process
+    receiveAlerts();  // receive and display alerts
+    exit(0);
+  }
   
   // void menu()
   menu();
